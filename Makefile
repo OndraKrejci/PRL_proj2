@@ -9,5 +9,8 @@ pro: pro.cpp
 clean:
 	rm -f pro xkrejc69.zip
 
+run:
+	./test.sh "ABCDEFG"
+
 zip: pro
 	zip xkrejc69.zip pro.cpp test.sh xkrejc69.pdf
