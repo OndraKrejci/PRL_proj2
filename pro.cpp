@@ -126,6 +126,7 @@ int main(int argc, char** argv){
 	// successor index
 	if(rank == 3){ // edge to root was removed, no need to send messages to itself
 		succ = STOP;
+		weight = 0;
 	}
 	else{
 		succ = etour[rank];
@@ -142,16 +143,9 @@ int main(int argc, char** argv){
 	int succSucc;
 	int predPred;
 
-	if(succ == STOP){
-		weight = 0;
-	}
 	for(unsigned i = 0; i < unsigned(ceil(log2(commSize))); i++){
 		MPI_Request lreqs[6];
 		unsigned reqCount = 0;
-
-		if(succ != STOP){
-			MPI_Isend(&pred, 1, MPI_INT, succ, REQ_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
-		}
 
 		if(pred != STOP){
 			MPI_Irecv(&predPred, 1, MPI_INT, pred, REQ_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
@@ -160,6 +154,7 @@ int main(int argc, char** argv){
 		}
 
 		if(succ != STOP){
+			MPI_Isend(&pred, 1, MPI_INT, succ, REQ_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
 			MPI_Irecv(&succWeight, 1, MPI_UNSIGNED, succ, WEIGHT_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
 			MPI_Irecv(&succSucc, 1, MPI_INT, succ, SUCC_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
 		}
