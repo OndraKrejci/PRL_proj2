@@ -14,15 +14,13 @@
 
 #include <mpi.h>
 
-constexpr int PREORDER_TAG = 1;
-constexpr int REQ_TAG = 2;
-constexpr int WEIGHT_TAG = 3;
-constexpr int SUCC_TAG = 4;
+constexpr int PRED_TAG = 1;
+constexpr int WEIGHT_TAG = 2;
+constexpr int SUCC_TAG = 3;
+constexpr int PREORDER_TAG = 4;
 
-enum ERROR_CODE{
-	ERR_ARGUMENTS = 1,
-	ERR_COMMUNICATION
-};
+
+constexpr int ERR_ARGUMENTS = 1;
 
 typedef struct{
 	unsigned edge;
@@ -32,7 +30,7 @@ typedef struct{
 constexpr int STOP = std::numeric_limits<int>::max();
 
 // Abort the execution after an error has occured
-void err_exit(const MPI_Comm& comm, const ERROR_CODE code){
+void err_exit(const MPI_Comm& comm, const int code){
 	MPI_Abort(comm, code);
 }
 
@@ -110,7 +108,7 @@ unsigned preorderSuffixSum(const int rank, const bool even, const int etour, con
 		pred = STOP;
 	}
 	else{
-		MPI_Irecv(&pred, 1, MPI_INT, MPI_ANY_SOURCE, PREORDER_TAG, MPI_COMM_WORLD, &reqs[0]);
+		MPI_Irecv(&pred, 1, MPI_INT, MPI_ANY_SOURCE, PRED_TAG, MPI_COMM_WORLD, &reqs[0]);
 	}
 
 	// successor index
@@ -120,7 +118,7 @@ unsigned preorderSuffixSum(const int rank, const bool even, const int etour, con
 	}
 	else{
 		succ = etour;
-		MPI_Isend(&rank, 1, MPI_INT, succ, PREORDER_TAG, MPI_COMM_WORLD, &reqs[1]);
+		MPI_Isend(&rank, 1, MPI_INT, succ, PRED_TAG, MPI_COMM_WORLD, &reqs[1]); // informs the successor about its predecessor
 	}
 
 	// exchange info about initial predecessors
@@ -139,13 +137,13 @@ unsigned preorderSuffixSum(const int rank, const bool even, const int etour, con
 		unsigned reqCount = 0;
 
 		if(pred != STOP){
-			MPI_Irecv(&predPred, 1, MPI_INT, pred, REQ_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
+			MPI_Irecv(&predPred, 1, MPI_INT, pred, PRED_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
 			MPI_Isend(&weight, 1, MPI_UNSIGNED, pred, WEIGHT_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
 			MPI_Isend(&succ, 1, MPI_INT, pred, SUCC_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
 		}
 
 		if(succ != STOP){
-			MPI_Isend(&pred, 1, MPI_INT, succ, REQ_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
+			MPI_Isend(&pred, 1, MPI_INT, succ, PRED_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
 			MPI_Irecv(&succWeight, 1, MPI_UNSIGNED, succ, WEIGHT_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
 			MPI_Irecv(&succSucc, 1, MPI_INT, succ, SUCC_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
 		}
