@@ -19,7 +19,6 @@ constexpr int WEIGHT_TAG = 2;
 constexpr int SUCC_TAG = 3;
 constexpr int PREORDER_TAG = 4;
 
-
 constexpr int ERR_ARGUMENTS = 1;
 
 typedef struct{
@@ -159,6 +158,8 @@ unsigned preorderSuffixSum(const int rank, const bool even, const int etour, con
 		if(pred != STOP){
 			pred = predPred;
 		}
+
+		MPI_Barrier(MPI_COMM_WORLD);
 	}
 
 	// no need for correction, last edge always has a weight of 0 (is a reverse edge)
