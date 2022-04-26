@@ -116,7 +116,7 @@ int main(int argc, char** argv){
 		}
 	}
 
-	if(rank == 3){ // root correction
+	if(etour[rank] == 0){ // root correction
 		etour[rank] = rank;
 	}
 
@@ -133,7 +133,7 @@ int main(int argc, char** argv){
 		MPI_Irecv(&pred, 1, MPI_INT, MPI_ANY_SOURCE, PREORDER_TAG, MPI_COMM_WORLD, &reqs[0]);
 	}
 	// successor index
-	if(rank == 3){ // edge to root was removed, no need to send messages to itself
+	if(etour[rank] == rank){ // edge to root was removed, no need to send messages to itself
 		succ = STOP;
 		weight = 0;
 	}
@@ -143,7 +143,7 @@ int main(int argc, char** argv){
 	}
 	if(rank == 0)
 		MPI_Wait(&reqs[1], MPI_STATUS_IGNORE);
-	else if(rank == 3)
+	else if(etour[rank] == rank)
 		MPI_Wait(&reqs[0], MPI_STATUS_IGNORE);
 	else
 		MPI_Waitall(2, reqs, MPI_STATUSES_IGNORE);
