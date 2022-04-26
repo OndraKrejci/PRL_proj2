@@ -49,9 +49,11 @@ int getCommSize(const MPI_Comm& comm){
 }
 
 // Checks that the required argument exists and returns it
-std::string parseArgs(int argc, char** argv){
+std::string parseArgs(int argc, char** argv, const int rank){
 	if(argc < 2){
-		std::cerr << "Requires one argument representing nodes of a binary tree as an array\n";
+		if(rank == 0){
+			std::cerr << "Requires one argument representing nodes of a binary tree as an array\n";
+		}
 		err_exit(MPI_COMM_WORLD, ERR_ARGUMENTS);
 	}
 	return std::string(argv[1]);
@@ -74,7 +76,7 @@ std::vector<adjacency> buildAdjacencyList(const unsigned vertex, const size_t co
 	return adjacency_list;
 }
 
-// Calculates value of the Eulr tour for the given edge (parameter is already just the reverse edge)
+// Calculates value of the Euler tour for the given edge (parameter is already just the reverse edge)
 int getEtourPart(const unsigned reverseEdge, const std::vector<adjacency>& adjacencyListTo, const int rank){
 	int etour;
 	for(unsigned i = 0; i < adjacencyListTo.size(); i++){ // calculate next
@@ -211,12 +213,15 @@ void preorderPrint(const std::string& nodes, const std::vector<unsigned>& preord
 int main(int argc, char** argv){
 	MPI_Init(&argc, &argv);
 
-	const std::string nodes = parseArgs(argc, argv);
-	const size_t count = nodes.length();
+	const int rank = getCommRank(MPI_COMM_WORLD); // rank determines the rank of the edge
 	const int commSize = getCommSize(MPI_COMM_WORLD);
+	const std::string nodes = parseArgs(argc, argv, rank);
+	const size_t count = nodes.length();
 	const int requiredProcs = (count == 1) ? 1 : (2 * count) - 2;
 	if(requiredProcs != commSize){
-		std::cerr << "Algorithm requires exaclty " << requiredProcs << " processes (used " << commSize << ")\n";
+		if(rank == 0){
+			std::cerr << "Algorithm requires exaclty " << requiredProcs << " processes (used " << commSize << ")\n";
+		}
 		err_exit(MPI_COMM_WORLD, ERR_ARGUMENTS);
 	}
 
@@ -226,7 +231,6 @@ int main(int argc, char** argv){
 		return 0;
 	}
 
-	const int rank = getCommRank(MPI_COMM_WORLD); // rank determines the rank of the edge
 	const bool even = (rank % 2) == 0; // even index == forward edge
 
 	const int to = even ? (rank / 2) + 1 : rank / 4; // index of vertex the edge goes to
