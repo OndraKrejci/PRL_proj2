@@ -76,7 +76,140 @@ std::vector<adjacency> buildAdjacencyList(const unsigned vertex, const size_t co
 	return adjacency_list;
 }
 
-// Prints the tree's nodes in preorder
+// Calculates value of the Eulr tour for the given edge (parameter is already just the reverse edge)
+int getEtourPart(const unsigned reverseEdge, const std::vector<adjacency>& adjacencyListTo, const int rank){
+	int etour;
+	for(unsigned i = 0; i < adjacencyListTo.size(); i++){ // calculate next
+		if(adjacencyListTo[i].edge == reverseEdge){
+			if((i + 1) < adjacencyListTo.size()){ // next(e_r) <> nil
+				etour = adjacencyListTo[i + 1].edge;
+			}
+			else{
+				etour = adjacencyListTo[0].edge;
+			}
+		}
+	}
+
+	if(etour == 0){ // root correction
+		etour = rank;
+	}
+
+	return etour;
+}
+
+// Calculates suffix sum (modified/simplified for use with the preorder algorithm) and returns the weight for the edge
+unsigned preorderSuffixSum(const int rank, const bool even, const int etour, const int commSize){
+	// prepare suffix sum variables
+	int pred;
+	int succ;
+	unsigned weight = even ? 1 : 0;
+	MPI_Request reqs[2];
+
+	// predecessor index
+	if(rank == 0){ // first edge has no predecessors
+		pred = STOP;
+	}
+	else{
+		MPI_Irecv(&pred, 1, MPI_INT, MPI_ANY_SOURCE, PREORDER_TAG, MPI_COMM_WORLD, &reqs[0]);
+	}
+
+	// successor index
+	if(etour == rank){ // edge to root was removed, no need to send messages to itself
+		succ = STOP;
+		weight = 0;
+	}
+	else{
+		succ = etour;
+		MPI_Isend(&rank, 1, MPI_INT, succ, PREORDER_TAG, MPI_COMM_WORLD, &reqs[1]);
+	}
+
+	// exchange info about initial predecessors
+	if(rank == 0)
+		MPI_Wait(&reqs[1], MPI_STATUS_IGNORE);
+	else if(etour == rank)
+		MPI_Wait(&reqs[0], MPI_STATUS_IGNORE);
+	else
+		MPI_Waitall(2, reqs, MPI_STATUSES_IGNORE);
+
+	unsigned succWeight; // weight of the successor
+	int succSucc; // successor of the successor
+	int predPred; // predecessor of the predecessor
+	for(unsigned i = 0; i < unsigned(ceil(log2(commSize))); i++){ // internal suffix sum loop
+		MPI_Request lreqs[6];
+		unsigned reqCount = 0;
+
+		if(pred != STOP){
+			MPI_Irecv(&predPred, 1, MPI_INT, pred, REQ_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
+			MPI_Isend(&weight, 1, MPI_UNSIGNED, pred, WEIGHT_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
+			MPI_Isend(&succ, 1, MPI_INT, pred, SUCC_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
+		}
+
+		if(succ != STOP){
+			MPI_Isend(&pred, 1, MPI_INT, succ, REQ_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
+			MPI_Irecv(&succWeight, 1, MPI_UNSIGNED, succ, WEIGHT_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
+			MPI_Irecv(&succSucc, 1, MPI_INT, succ, SUCC_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
+		}
+
+		MPI_Waitall(reqCount, lreqs, MPI_STATUSES_IGNORE);
+
+		if(succ != STOP){
+			weight += succWeight;
+			succ = succSucc;
+		}
+		if(pred != STOP){
+			pred = predPred;
+		}
+	}
+
+	// no need for correction, last edge always has a weight of 0 (is a reverse edge)
+
+	return weight;
+}
+
+// Sends preorde indexes to the appropriate process, then gathers them at the root
+std::vector<unsigned> exchangePreorder(const int rank, const bool even, const int commSize, 
+	const size_t nodeCount, const unsigned weight, const int to
+){
+	MPI_Request reqs[2];
+	unsigned reqCount = 0;
+	std::vector<unsigned> preorder(commSize);
+
+	if(even){ // send the computed weight to the correct index
+		const unsigned result = nodeCount - weight;
+		MPI_Isend(&result, 1, MPI_UNSIGNED, to, PREORDER_TAG, MPI_COMM_WORLD, &reqs[reqCount++]);
+	}
+
+	if(rank < static_cast<int>(nodeCount) && rank != 0){ // receive the computed weight
+		MPI_Irecv(&preorder[rank], 1, MPI_UNSIGNED, MPI_ANY_SOURCE, PREORDER_TAG, MPI_COMM_WORLD, &reqs[reqCount++]);
+	}
+
+	if(reqCount > 0){
+		MPI_Waitall(reqCount, reqs, MPI_STATUSES_IGNORE);
+	}
+
+	if(rank == 0){
+		preorder[0] = 0;
+	}
+	
+	// gather the preorder traversal indices at the root
+	MPI_Gather(&preorder[rank], 1, MPI_UNSIGNED, preorder.data(), 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+	MPI_Barrier(MPI_COMM_WORLD);
+
+	return preorder;
+}
+
+// Print the tree's nodes in preorder
+void preorderPrint(const std::string& nodes, const std::vector<unsigned>& preorder){
+	const size_t count = nodes.size();
+	std::string out;
+	out.resize(count + 1);
+	for(unsigned i = 0; i < count; i++){
+		out[preorder[i]] = nodes[i];
+	}
+	std::cout << out << std::endl;
+}
+
+// Calculate preorder traversal and print the tree's nodes
 int main(int argc, char** argv){
 	MPI_Init(&argc, &argv);
 
@@ -101,113 +234,15 @@ int main(int argc, char** argv){
 	const int to = even ? (rank / 2) + 1 : rank / 4; // index of vertex the edge goes to
 
 	const std::vector<adjacency> adjacencyListTo = buildAdjacencyList(to, count); // relevant part of the adjacency list
+	const unsigned reverseEdge = even ? rank + 1 : rank - 1; // index of the reverse edge
+	const int etour = getEtourPart(reverseEdge, adjacencyListTo, rank); // Etour value for the edge
 
-	const unsigned reverseEdge = even ? rank + 1 : rank - 1; // index of reverse edge
+	const unsigned weight = preorderSuffixSum(rank, even, etour, commSize);
 
-	std::vector<int> etour(commSize);
-	for(unsigned i = 0; i < adjacencyListTo.size(); i++){ // calculate next
-		if(adjacencyListTo[i].edge == reverseEdge){
-			if((i + 1) < adjacencyListTo.size()){ // next(e_r) <> nil
-				etour[rank] = adjacencyListTo[i + 1].edge;
-			}
-			else{
-				etour[rank] = adjacencyListTo[0].edge;
-			}
-		}
-	}
-
-	if(etour[rank] == 0){ // root correction
-		etour[rank] = rank;
-	}
-
-	// prepare suffix sum variables
-	int pred;
-	int succ;
-	unsigned weight = even ? 1 : 0;
-	MPI_Request reqs[2];
-	// predecessor index
-	if(rank == 0){ // first edge has no predecessors
-		pred = STOP;
-	}
-	else{
-		MPI_Irecv(&pred, 1, MPI_INT, MPI_ANY_SOURCE, PREORDER_TAG, MPI_COMM_WORLD, &reqs[0]);
-	}
-	// successor index
-	if(etour[rank] == rank){ // edge to root was removed, no need to send messages to itself
-		succ = STOP;
-		weight = 0;
-	}
-	else{
-		succ = etour[rank];
-		MPI_Isend(&rank, 1, MPI_INT, succ, PREORDER_TAG, MPI_COMM_WORLD, &reqs[1]);
-	}
-	if(rank == 0)
-		MPI_Wait(&reqs[1], MPI_STATUS_IGNORE);
-	else if(etour[rank] == rank)
-		MPI_Wait(&reqs[0], MPI_STATUS_IGNORE);
-	else
-		MPI_Waitall(2, reqs, MPI_STATUSES_IGNORE);
-
-	unsigned succWeight;
-	int succSucc;
-	int predPred;
-
-	for(unsigned i = 0; i < unsigned(ceil(log2(commSize))); i++){
-		MPI_Request lreqs[6];
-		unsigned reqCount = 0;
-
-		if(pred != STOP){
-			MPI_Irecv(&predPred, 1, MPI_INT, pred, REQ_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
-			MPI_Isend(&weight, 1, MPI_UNSIGNED, pred, WEIGHT_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
-			MPI_Isend(&succ, 1, MPI_INT, pred, SUCC_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
-		}
-
-		if(succ != STOP){
-			MPI_Isend(&pred, 1, MPI_INT, succ, REQ_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
-			MPI_Irecv(&succWeight, 1, MPI_UNSIGNED, succ, WEIGHT_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
-			MPI_Irecv(&succSucc, 1, MPI_INT, succ, SUCC_TAG, MPI_COMM_WORLD, &lreqs[reqCount++]);
-		}
-
-		MPI_Waitall(reqCount, lreqs, MPI_STATUSES_IGNORE);
-
-		if(succ != STOP){
-			weight += succWeight;
-			succ = succSucc;
-
-		}
-		if(pred != STOP){
-			pred = predPred;
-		}
-	}
-	// no need for correction, last edge always has a weight of 0
-
-	unsigned reqCount = 0;
-	std::vector<unsigned> preorder(commSize);
-	if(even){ // send the computed weight to the correct index
-		const unsigned result = count - weight;
-		MPI_Isend(&result, 1, MPI_UNSIGNED, to, PREORDER_TAG, MPI_COMM_WORLD, &reqs[reqCount++]);
-	}
-	if(rank < static_cast<int>(count) && rank != 0){ // receive the computed weight
-		MPI_Irecv(&preorder[rank], 1, MPI_UNSIGNED, MPI_ANY_SOURCE, PREORDER_TAG, MPI_COMM_WORLD, &reqs[reqCount++]);
-	}
-	if(reqCount > 0){
-		MPI_Waitall(reqCount, reqs, MPI_STATUSES_IGNORE);
-	}
-
-	if(rank == 0){
-		preorder[0] = 0;
-	}
-	
-	// gather the preorder traversal indices to root
-	MPI_Gather(&preorder[rank], 1, MPI_UNSIGNED, preorder.data(), 1, MPI_UNSIGNED, 0, MPI_COMM_WORLD);
+	const std::vector<unsigned> preorder = exchangePreorder(rank, even, commSize, count, weight, to);
 	
 	if(rank == 0){
-		std::string out;
-		out.resize(count + 1);
-		for(unsigned i = 0; i < count; i++){
-			out[preorder[i]] = nodes[i];
-		}
-		std::cout << out << std::endl;
+		preorderPrint(nodes, preorder);
 	}
 
 	MPI_Finalize();
